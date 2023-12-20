@@ -4,9 +4,9 @@ from typing import Any, List, Optional, Union, cast
 
 
 from .external.jsonschemaobject import JsonSchemaObject, json_schema_data_formats
-from .exceptions import LMFormatEnforcerException
-from .characterlevelparser import CharacterLevelParser, CharacterLevelParserConfig, ForceStopParser, SequenceParser, StringParser, UnionParser
-from .consts import BACKSLASH, BACKSLASH_ESCAPING_CHARACTERS, MAX_CONSECUTIVE_WHITESPACES, WHITESPACE_CHARACTERS
+from .characterlevelparser import CharacterLevelParser, CharacterLevelParserConfig, ForceStopParser, JsonEscapingParser, UnionParser
+from .consts import BACKSLASH, MAX_CONSECUTIVE_WHITESPACES, WHITESPACE_CHARACTERS
+from .tokenizerprefixtree import ShortcutKey
 
 
 _ANY_JSON_SCHEMA_DICT = {'anyOf': [{'type': type} for type in json_schema_data_formats.keys()]}
@@ -97,16 +97,21 @@ class JsonSchemaParser(CharacterLevelParser):
     def can_end(self) -> bool:
         return all(parser.can_end() for parser in self.object_stack)
 
-    def shortcut_key(self) -> Optional[str]:
+    def shortcut_key(self) -> Optional[ShortcutKey]:
         if self.object_stack:
-            current_parser = self.object_stack[-1]
-            if isinstance(current_parser, StringParsingState):
-                if not current_parser.allowed_strings and current_parser.seen_opening_quote and not current_parser.seen_closing_quote \
-                    and current_parser.min_length is None and current_parser.max_length is None:
-                    # Performance optimization: When we are parsing a string that is not from a list of allowed strings, most tokens
-                    # are legal. The exploration can be more costly than the LM itself for large tokenizers (because this is pure python),
-                    # so we signal that we are in a "freetext" mode, and reuse the allowed token list throughout the run.
-                    return 'json_freetext'
+            print(self.object_stack)
+            for current_parser in reversed(self.object_stack):
+                if current_parser.can_end():
+                    continue
+                elif isinstance(current_parser, StringParsingState):
+                    if not current_parser.allowed_strings and current_parser.seen_opening_quote and not current_parser.seen_closing_quote \
+                        and current_parser.min_length is None and current_parser.max_length is None:
+                        # Performance optimization: When we are parsing a string that is not from a list of allowed strings, most tokens
+                        # are legal. The exploration can be more costly than the LM itself for large tokenizers (because this is pure python),
+                        # so we signal that we are in a "freetext" mode, and reuse the allowed token list throughout the run.
+                        return ShortcutKey.JSON_FREETEXT
+                else:
+                    break
         return None
 
 
@@ -450,12 +455,7 @@ class StringParsingState(PrimitiveParsingState):
                 self.seen_closing_quote = True
                 self.parsed_string = self.parsed_string[:-1]
         if new_character == BACKSLASH:
-            # After a backslack we immediately have the escaping character, and if its 'u', we have 4 hex digits
-            escaping_character_parsers: List[CharacterLevelParser] = [StringParser(c) for c in BACKSLASH_ESCAPING_CHARACTERS]
-            hex_digit_parser: CharacterLevelParser = UnionParser([StringParser(c) for c in "0123456789abcdefABCDEF"])
-            unicode_components: List[CharacterLevelParser] = list([StringParser("u")] + [hex_digit_parser] * 4)
-            unicode_escape_parser: CharacterLevelParser = SequenceParser(unicode_components)
-            json_escaping_parser = UnionParser(escaping_character_parsers + [unicode_escape_parser])
+            json_escaping_parser = JsonEscapingParser()
             self.root.context.active_parser.object_stack.append(json_escaping_parser)
         return self
 

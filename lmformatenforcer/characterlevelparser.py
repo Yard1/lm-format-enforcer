@@ -1,7 +1,8 @@
 import abc
 from dataclasses import dataclass
 from typing import Hashable, List, Optional
-from .consts import COMPLETE_ALPHABET
+from .consts import COMPLETE_ALPHABET, BACKSLASH_ESCAPING_CHARACTERS
+from .tokenizerprefixtree import ShortcutKey
 
 
 @dataclass
@@ -31,7 +32,7 @@ class CharacterLevelParser(abc.ABC):
         """Return True if the parser is in a state where it can end (potentially finished parsing the desired structure), and False otherwise."""
         raise NotImplementedError()
     
-    def shortcut_key(self) -> Optional[str]:
+    def shortcut_key(self) -> Optional[ShortcutKey]:
         """Optional. Return a string that denotes that this state is a repeating state, full tree traversal should be avoided."""
         return None
     
@@ -98,7 +99,7 @@ class UnionParser(CharacterLevelParser):
     def can_end(self) -> bool:
         return any([parser.can_end() for parser in self.parsers])
     
-    def shortcut_key(self) -> Optional[str]:
+    def shortcut_key(self) -> Optional[ShortcutKey]:
         return self.parsers[0].shortcut_key() if len(self.parsers) == 1 else None
     
     def cache_key(self) -> Optional[Hashable]:
@@ -140,7 +141,7 @@ class SequenceParser(CharacterLevelParser):
     def can_end(self) -> bool:
         return all([parser.can_end() for parser in self.parsers])
     
-    def shortcut_key(self) -> Optional[str]:
+    def shortcut_key(self) -> Optional[ShortcutKey]:
         return self.parsers[0].shortcut_key() if len(self.parsers) == 1 else None
     
     def cache_key(self) -> Optional[Hashable]:
@@ -149,4 +150,27 @@ class SequenceParser(CharacterLevelParser):
             return ('sequence', all_cache_keys)
         return None
 
+class JsonEscapingParser(CharacterLevelParser):
+    def __init__(self):
+        # After a backslack we immediately have the escaping character, and if its 'u', we have 4 hex digits
+        escaping_character_parsers: List[CharacterLevelParser] = [StringParser(c) for c in BACKSLASH_ESCAPING_CHARACTERS]
+        hex_digit_parser: CharacterLevelParser = UnionParser([StringParser(c) for c in "0123456789abcdefABCDEF"])
+        unicode_components: List[CharacterLevelParser] = list([StringParser("u")] + [hex_digit_parser] * 4)
+        unicode_escape_parser: CharacterLevelParser = SequenceParser(unicode_components)
+        self.json_escaping_parser = UnionParser(escaping_character_parsers + [unicode_escape_parser])
 
+    def add_character(self, new_character: str) -> CharacterLevelParser:
+        # The next call will be a regular UnionParser, but that is fine.
+        return self.json_escaping_parser.add_character(new_character)
+    
+    def get_allowed_characters(self) -> str:
+        return self.json_escaping_parser.get_allowed_characters()
+    
+    def can_end(self) -> bool:
+        return self.json_escaping_parser.can_end()
+    
+    def shortcut_key(self) -> Optional[ShortcutKey]:
+        return None #ShortcutKey.BACKSLASH_ESCAPE
+    
+    def cache_key(self) -> Optional[Hashable]:
+        return self.json_escaping_parser.cache_key()

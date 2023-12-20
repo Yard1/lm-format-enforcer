@@ -4,7 +4,7 @@ import logging
 
 from .exceptions import LMFormatEnforcerException
 from .characterlevelparser import CharacterLevelParser, ForceStopParser, CharacterLevelParserConfig
-from .tokenizerprefixtree import TokenizerPrefixTree, TokenizerPrefixTreeNode
+from .tokenizerprefixtree import TokenizerPrefixTree, TokenizerPrefixTreeNode, ShortcutKey
 
 
 class TokenEnforcerTokenizerData:
@@ -115,7 +115,7 @@ class TokenEnforcer:
                               "CharacterLevelParser parameters")
             state.allowed_tokens = [self.eos_token_id]
 
-    def _collect_allowed_tokens(self, parser: CharacterLevelParser, tree_node: TokenizerPrefixTreeNode, allowed_tokens: List[int], shortcut_key: Optional[str]):
+    def _collect_allowed_tokens(self, parser: CharacterLevelParser, tree_node: TokenizerPrefixTreeNode, allowed_tokens: List[int], shortcut_key: Optional[ShortcutKey]):
         allowed_tokens.extend(tree_node.tokens)
         allowed_characters = parser.get_allowed_characters()
         relevant_characters = tree_node.children.keys()
@@ -125,12 +125,14 @@ class TokenEnforcer:
         # Performance optimization: If we are in JSON freetext, all of the tokens that don't contain quote, or end with quote, are legal, so we take
         # their cached list. If the quote character is allowed, we only need to dynamically explore the cases where the string starts with a quote.
         # This breaks the elegance of the API, but otherwise it is a huge performance hit.
-        if shortcut_key == 'json_freetext':
-            allowed_tokens.extend(self.tokenizer_tree.json_freetext_tokens)
-            characters_to_explore = characters_to_explore.intersection(['"'])
+        if shortcut_key:
+            shortcut = self.tokenizer_tree.shortcuts[shortcut_key]
+            allowed_tokens.extend(shortcut)
+            if shortcut.characters_to_explore_processor:
+                characters_to_explore = shortcut.characters_to_explore_processor(characters_to_explore)
 
         for character in characters_to_explore:
-            next_parser = parser.add_character(character )
+            next_parser = parser.add_character(character)
             next_tree_node = tree_node.children[character]
             self._collect_allowed_tokens(next_parser, next_tree_node, allowed_tokens, None)
             
