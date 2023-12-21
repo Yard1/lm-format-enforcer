@@ -99,19 +99,26 @@ class JsonSchemaParser(CharacterLevelParser):
 
     def shortcut_key(self) -> Optional[ShortcutKey]:
         if self.object_stack:
-            print(self.object_stack)
-            for current_parser in reversed(self.object_stack):
-                if current_parser.can_end():
-                    continue
-                elif isinstance(current_parser, StringParsingState):
-                    if not current_parser.allowed_strings and current_parser.seen_opening_quote and not current_parser.seen_closing_quote \
-                        and current_parser.min_length is None and current_parser.max_length is None:
-                        # Performance optimization: When we are parsing a string that is not from a list of allowed strings, most tokens
-                        # are legal. The exploration can be more costly than the LM itself for large tokenizers (because this is pure python),
-                        # so we signal that we are in a "freetext" mode, and reuse the allowed token list throughout the run.
-                        return ShortcutKey.JSON_FREETEXT
-                else:
-                    break
+            current_parser = self.object_stack[-1]
+            string_parsing_state = None
+            backslash_state = None
+            if isinstance(current_parser, StringParsingState):
+                string_parsing_state = current_parser
+            elif len(self.object_stack) > 1:
+                prev_parser = self.object_stack[-2]
+                if isinstance(prev_parser, StringParsingState):
+                    if not current_parser.get_allowed_characters():
+                        string_parsing_state = prev_parser
+                    elif isinstance(current_parser, JsonEscapingParser) and prev_parser.shortcut_key():
+                        backslash_state = current_parser
+
+            if backslash_state:
+                return ShortcutKey.BACKSLASH_ESCAPE
+            elif string_parsing_state:
+                    # Performance optimization: When we are parsing a string that is not from a list of allowed strings, most tokens
+                    # are legal. The exploration can be more costly than the LM itself for large tokenizers (because this is pure python),
+                    # so we signal that we are in a "freetext" mode, and reuse the allowed token list throughout the run.
+                    return string_parsing_state.shortcut_key()
         return None
 
 
@@ -492,6 +499,12 @@ class StringParsingState(PrimitiveParsingState):
                 return self.parsed_string in self.allowed_strings
             else:
                 return bool(self.parsed_string)
+            
+    def shortcut_key(self) -> Optional[ShortcutKey]:
+        if not self.allowed_strings and self.seen_opening_quote and not self.seen_closing_quote \
+                    and self.min_length is None and self.max_length is None:
+            return ShortcutKey.JSON_FREETEXT
+        return None
 
 
 class ListParsingState(PrimitiveParsingState):

@@ -35,15 +35,16 @@ class TokenizerPrefixTree:
             # We only cache tokens that are 100% valid after a backslash.
             parser = json_escaping_parser
             evaluated_len = 0
-            for character in decoded:
-                allowed_characters = parser.get_allowed_characters()
-                if character in allowed_characters:
-                    parser = parser.add_character(character)
-                else:
-                    break
-                evaluated_len += 1
-            if evaluated_len == len(decoded):
-                self.shortcuts[ShortcutKey.BACKSLASH_ESCAPE].append(token_idx)
+            if decoded[0] != "u" and '"' not in decoded[1:]:
+                for character in decoded:
+                    allowed_characters = parser.get_allowed_characters()
+                    if character in allowed_characters:
+                        parser = parser.add_character(character)
+                    else:
+                        break
+                    evaluated_len += 1
+                if evaluated_len > 0:
+                    self.shortcuts[ShortcutKey.BACKSLASH_ESCAPE].append(token_idx)
 
             # Performance optimization - cache the tokens of all the strings that don't contain a quote in the middle, or a line break.
             # When we are in a JSON freetext string field, they will all be permitted and this will save a lot of tree iterations.
@@ -65,7 +66,7 @@ class TokenizerPrefixTree:
     def _create_shortcuts(self):
         self.shortcuts: Dict[ShortcutKey, Shortcut] = {}
         self.shortcuts[ShortcutKey.JSON_FREETEXT] = Shortcut([], key=ShortcutKey.JSON_FREETEXT, characters_to_explore_processor=lambda characters_to_explore: characters_to_explore.intersection(['"']))
-        self.shortcuts[ShortcutKey.BACKSLASH_ESCAPE] = Shortcut([], key=ShortcutKey.BACKSLASH_ESCAPE, characters_to_explore_processor=lambda characters_to_explore: set())
+        self.shortcuts[ShortcutKey.BACKSLASH_ESCAPE] = Shortcut([], key=ShortcutKey.BACKSLASH_ESCAPE, characters_to_explore_processor=lambda characters_to_explore: characters_to_explore.intersection(['u', '"']))
 
 
     def _add_token_to_tree(self, token_str: str, token_idx: int, node: TokenizerPrefixTreeNode):

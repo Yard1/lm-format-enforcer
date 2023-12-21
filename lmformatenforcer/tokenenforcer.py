@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Hashable, List, Optional, Tuple
+from typing import Callable, Dict, Hashable, List, Optional, Tuple, Set
 import logging
 
 from .exceptions import LMFormatEnforcerException
@@ -86,7 +86,7 @@ class TokenEnforcer:
 
     def _compute_allowed_tokens(self, state_tokens: Tuple, state: 'TokenEnforcer.OutputTensorState'):
         try:
-            allowed_tokens: List[int] = []
+            allowed_tokens: Set[int] = set()
             cache_key = state.parser.cache_key()
             if cache_key is not None and cache_key in self.allowed_token_cache:
                 state.allowed_tokens = self.allowed_token_cache[cache_key]
@@ -94,7 +94,7 @@ class TokenEnforcer:
             shortcut_key = state.parser.shortcut_key()
             self._collect_allowed_tokens(state.parser, self.tokenizer_tree.root, allowed_tokens, shortcut_key)
             if state.parser.can_end():
-                allowed_tokens.append(self.eos_token_id)
+                allowed_tokens.add(self.eos_token_id)
             if not allowed_tokens:
                 raise ValueError(f"Parser reached state with no allowed tokens")
             # root_state = next(state for state in self.prefix_states.values() if state.parser == self.root_parser)
@@ -113,10 +113,10 @@ class TokenEnforcer:
                               "Terminating the parser. Please open an issue at \n"
                               "https://github.com/noamgat/lm-format-enforcer/issues with the prefix and "
                               "CharacterLevelParser parameters")
-            state.allowed_tokens = [self.eos_token_id]
+            state.allowed_tokens = {self.eos_token_id}
 
-    def _collect_allowed_tokens(self, parser: CharacterLevelParser, tree_node: TokenizerPrefixTreeNode, allowed_tokens: List[int], shortcut_key: Optional[ShortcutKey]):
-        allowed_tokens.extend(tree_node.tokens)
+    def _collect_allowed_tokens(self, parser: CharacterLevelParser, tree_node: TokenizerPrefixTreeNode, allowed_tokens: Set[int], shortcut_key: Optional[ShortcutKey]):
+        allowed_tokens.update(tree_node.tokens)
         allowed_characters = parser.get_allowed_characters()
         relevant_characters = tree_node.children.keys()
         # This next line is the heart of the traversal algorithm. We only explore paths that are shared by both the parser and the tokenizer.
@@ -127,7 +127,7 @@ class TokenEnforcer:
         # This breaks the elegance of the API, but otherwise it is a huge performance hit.
         if shortcut_key:
             shortcut = self.tokenizer_tree.shortcuts[shortcut_key]
-            allowed_tokens.extend(shortcut)
+            allowed_tokens.update(shortcut)
             if shortcut.characters_to_explore_processor:
                 characters_to_explore = shortcut.characters_to_explore_processor(characters_to_explore)
 

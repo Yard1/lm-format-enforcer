@@ -3,12 +3,20 @@ from dataclasses import dataclass
 from typing import Hashable, List, Optional
 from .consts import COMPLETE_ALPHABET, BACKSLASH_ESCAPING_CHARACTERS
 from .tokenizerprefixtree import ShortcutKey
-
+from functools import wraps
 
 @dataclass
 class CharacterLevelParserConfig:
-        alphabet: str = COMPLETE_ALPHABET
+    alphabet: str = COMPLETE_ALPHABET
 
+def cache_method(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        cache_key = "__"+str(method)
+        if cache_key not in self.__dict__:
+            self.__dict__[cache_key] = method(self, *args, **kwargs)
+        return self.__dict__[cache_key]
+    return wrapper
 
 class CharacterLevelParser(abc.ABC):
     """CharacterLevelParser is an interface for classes that can parse strings one character at a time, and determine which characters are allowed at any specific time"""
@@ -67,17 +75,19 @@ class StringParser(CharacterLevelParser):
 
     def can_end(self) -> bool:
         return not self.target_str
-    
+
 
 class ForceStopParser(CharacterLevelParser):
     """A simple parser that forbids any characters except the stop token. Used to force stop LM operation"""
     def add_character(self, new_character: str) -> CharacterLevelParser:
         return self
+
     def get_allowed_characters(self) -> str:
         return ""
+
     def can_end(self) -> bool:
         return True
-    
+
 
 class UnionParser(CharacterLevelParser):
     """A parser that allows a string that would be allowed by any of several different parsers"""
@@ -91,13 +101,14 @@ class UnionParser(CharacterLevelParser):
         if len(next_parsers) == 1:
             return next_parsers[0]
         return UnionParser(next_parsers)
-    
+
+    @cache_method
     def get_allowed_characters(self) -> str:
-        allowed = "".join([parser.get_allowed_characters() for parser in self.parsers])
+        allowed = "".join(parser.get_allowed_characters() for parser in self.parsers)
         return "".join(set(allowed))
     
     def can_end(self) -> bool:
-        return any([parser.can_end() for parser in self.parsers])
+        return any(parser.can_end() for parser in self.parsers)
     
     def shortcut_key(self) -> Optional[ShortcutKey]:
         return self.parsers[0].shortcut_key() if len(self.parsers) == 1 else None
@@ -130,6 +141,7 @@ class SequenceParser(CharacterLevelParser):
             return legal_parsers[0]
         return UnionParser(legal_parsers)
     
+    @cache_method
     def get_allowed_characters(self) -> str:
         allowed_characters = set()
         for parser in self.parsers:
@@ -139,7 +151,7 @@ class SequenceParser(CharacterLevelParser):
         return "".join(allowed_characters)
     
     def can_end(self) -> bool:
-        return all([parser.can_end() for parser in self.parsers])
+        return all(parser.can_end() for parser in self.parsers)
     
     def shortcut_key(self) -> Optional[ShortcutKey]:
         return self.parsers[0].shortcut_key() if len(self.parsers) == 1 else None
@@ -170,7 +182,7 @@ class JsonEscapingParser(CharacterLevelParser):
         return self.json_escaping_parser.can_end()
     
     def shortcut_key(self) -> Optional[ShortcutKey]:
-        return None #ShortcutKey.BACKSLASH_ESCAPE
+        return ShortcutKey.BACKSLASH_ESCAPE
     
     def cache_key(self) -> Optional[Hashable]:
         return self.json_escaping_parser.cache_key()
